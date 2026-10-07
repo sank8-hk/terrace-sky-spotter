@@ -24,9 +24,12 @@
 <h1>🔭 Terrace Sky Spotter <small>what's up over Bengaluru tonight</small></h1>
 <p><span class="badge">open star catalogs</span> <span class="badge">open-weight Gemma, local</span> <span class="badge">no GPS · no cloud</span></p>
 <p id="health">Checking local model…</p>
+<p id="moon">Computing the Moon…</p>
 
-<h2>Tonight <span id="for"></span></h2>
-<p>Computed on this device from date + coordinates — tap a row to ask Gemma how to find it.</p>
+<h2>Sky <span id="for"></span></h2>
+<p>Computed on this device from date + coordinates — tap a row to ask Gemma how to find it.
+Plan ahead: <input type="datetime-local" id="at"> <button id="when" type="button">Show</button>
+<button id="now" type="button">Now</button></p>
 <table><thead><tr><th>Constellation</th><th>Anchor ⭐</th><th>Height</th><th>Look</th></tr></thead>
 <tbody id="rows"><tr><td colspan="4">Loading the sky…</td></tr></tbody></table>
 
@@ -48,22 +51,41 @@ function md(src) {
     .replace(/^- (.*)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>').replace(/\n/g, '<br>');
 }
-fetch('/api/tonight').then(r => r.json()).then(d => {
-  $('for').textContent = '(' + d.for + ', 12.97°N 77.59°E)';
-  $('rows').innerHTML = d.visible.map(c =>
-    `<tr data-name="${c.name}"><td><strong>${c.name}</strong><br><small>${c.hint}</small></td><td>${c.star}</td><td>${c.alt}°</td><td>${c.dir}</td></tr>`).join('');
-  document.querySelectorAll('tr[data-name]').forEach(tr => tr.addEventListener('click', () => detail(tr.dataset.name)));
-});
+let currentAt = null;
+function loadSky(at) {
+  currentAt = at || null;
+  const q = currentAt ? ('?at=' + encodeURIComponent(currentAt)) : '';
+  $('rows').innerHTML = '<tr><td colspan="4">Loading the sky…</td></tr>';
+  fetch('/api/tonight' + q).then(r => r.json()).then(d => {
+    $('for').textContent = '(' + d.for + ', 12.97°N 77.59°E)';
+    const m = d.moon, pct = Math.round(m.illum * 100);
+    $('moon').innerHTML = m.up
+      ? `🌙 Moon: <strong>${m.phase}</strong> (${pct}% lit), ${m.alt}° ${m.dir} — faint targets ${pct > 60 ? 'are <strong>washed out</strong>, stick to bright anchors' : 'partly affected; bright anchors best'}.`
+      : `🌙 Moon: <strong>${m.phase}</strong> (${pct}% lit), below horizon — dark skies!`;
+    $('rows').innerHTML = d.visible.map(c => {
+      const icon = c.kind === 'planet' ? '🪐 ' : '';
+      const wash = c.washed ? ' 🌕<small>washed out</small>' : '';
+      const hint = c.kind === 'planet' ? `<br><small>${c.hint}</small>` : `<br><small>${c.hint}</small>`;
+      return `<tr data-name="${c.name}"><td><strong>${icon}${c.name}</strong>${wash}${hint}</td><td>${c.star}</td><td>${c.alt}°</td><td>${c.dir}</td></tr>`;
+    }).join('') || '<tr><td colspan="4">Nothing above 15° right now — try another time.</td></tr>';
+    document.querySelectorAll('tr[data-name]').forEach(tr => tr.addEventListener('click', () => detail(tr.dataset.name)));
+  });
+}
+loadSky(null);
+$('when').addEventListener('click', () => { const v = $('at').value; if (v) loadSky(new Date(v).toISOString()); });
+$('now').addEventListener('click', () => { $('at').value = ''; loadSky(null); });
 async function detail(name) {
   const box = $('detail'); box.hidden = false; box.innerHTML = `<em>Gemma is looking up ${name}…</em>`;
-  const res = await fetch('/api/detail', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+  const payload = { name }; if (currentAt) payload.at = currentAt;
+  const res = await fetch('/api/detail', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
   box.innerHTML = '<h2>' + name + '</h2>' + md(await res.text());
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 $('go').addEventListener('click', async () => {
   $('go').disabled = true; const box = $('tour'); box.hidden = false; box.innerHTML = '';
   $('status').textContent = 'Gemma is writing your tour… (~30s on CPU)';
-  const res = await fetch('/api/tour', { method: 'POST' });
+  const payload = {}; if (currentAt) payload.at = currentAt;
+  const res = await fetch('/api/tour', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
   box.innerHTML = md(await res.text());
   $('status').textContent = 'Done — now go outside! 🌌';
   $('go').disabled = false;

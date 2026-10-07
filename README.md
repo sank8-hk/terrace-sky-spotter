@@ -12,9 +12,16 @@ narrates the tour and tells you star-hop by star-hop how to find each constellat
 - **Deterministic astronomy (code):** 16 anchor stars from open catalogs
   (Yale Bright Star Catalogue / HYG, public domain) + Julian-date → sidereal-time
   math picks constellations above 15° for 12.97°N 77.59°E. No GPS, no network.
+- **Moon phase + washout filter:** a synodic model computes illumination; the
+  naked-eye limit slides from ~mag 5.5 (new moon) to ~mag 2.3 (full), and faint
+  targets get a 🌕 washed-out badge. Validated against the Mar 3 2026 lunar eclipse.
+- **Planets:** low-precision orbital math (good to ~1–2°, naked-eye grade) adds
+  Venus, Mars, Jupiter and Saturn — verified by the Venus-elongation invariant
+  (never more than 47° from the Sun).
+- **Time picker:** plan ahead for any date/time, not just right now.
 - **Open-weight narration (local Gemma 3 1B via Ollama):** the night's tour,
-  myths, and per-constellation finder guides. The screen stays minimal by design —
-  glance, then look up.
+  myths, and per-constellation finder guides. The model never states positions —
+  code owns *what's up and where*; the model only narrates *how to find* it.
 - **Stack:** vanilla HTML/JS + zero-dependency Python server (`app.py`, stdlib only).
 
 ## Why open matters here

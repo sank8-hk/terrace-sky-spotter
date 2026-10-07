@@ -63,6 +63,97 @@ CONSTELLATIONS = [
 
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
+# Approximate V magnitude of each anchor star (naked-eye brightness reference).
+STAR_MAG = {"Markab": 2.5, "Alpheratz": 2.1, "Schedar": 2.2, "Mirfak": 1.8,
+            "Hamal": 2.0, "Alrescha": 3.8, "Sadalsuud": 2.9, "Deneb Algedi": 2.9,
+            "Deneb": 1.25, "Vega": 0.03, "Altair": 0.77, "Antares": 1.1,
+            "Kaus Australis": 1.8, "Aldebaran": 0.85, "Betelgeuse": 0.5, "Dubhe": 1.8}
+
+
+def _julian_day(dt_utc):
+    return dt_utc.timestamp() / 86400.0 + 2440587.5
+
+
+def moon_phase(dt_utc):
+    """Illumination 0..1 and phase name from a simple synodic model."""
+    age = (_julian_day(dt_utc) - 2451550.1) % 29.530588853
+    illum = (1 - math.cos(2 * math.pi * age / 29.530588853)) / 2
+    names = ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+             "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"]
+    return round(illum, 2), names[int(((age / 29.530588853) * 8 + 0.5) % 8)]
+
+
+def _kepler(m_deg, e):
+    m = math.radians(m_deg % 360.0)
+    e_star = e
+    ecc = m
+    for _ in range(8):
+        ecc = ecc - (ecc - e_star * math.sin(ecc) - m) / (1 - e_star * math.cos(ecc))
+    return math.degrees(ecc)
+
+
+def _helio(n, i, w, a, e, m):
+    """Heliocentric ecliptic rectangular coords (AU) from elements (deg, AU)."""
+    ecc = _kepler(m, e)
+    xv = a * (math.cos(math.radians(ecc)) - e)
+    yv = a * (math.sqrt(1 - e * e) * math.sin(math.radians(ecc)))
+    v = math.degrees(math.atan2(yv, xv))
+    r = math.hypot(xv, yv)
+    n, i, w, vw = map(math.radians, (n, i, w, v + w))
+    xh = r * (math.cos(n) * math.cos(vw) - math.sin(n) * math.sin(vw) * math.cos(i))
+    yh = r * (math.sin(n) * math.cos(vw) + math.cos(n) * math.sin(vw) * math.cos(i))
+    zh = r * (math.sin(vw) * math.sin(i))
+    return xh, yh, zh, v + math.degrees(w), r
+
+
+def _ecl_to_ra_dec(x, y, z):
+    obl = math.radians(23.4393)
+    xe, ye, ze = x, y * math.cos(obl) - z * math.sin(obl), y * math.sin(obl) + z * math.cos(obl)
+    ra = (math.degrees(math.atan2(ye, xe)) / 15.0) % 24.0
+    return ra, math.degrees(math.atan2(ze, math.hypot(xe, ye)))
+
+
+def planet_ra_dec(name, dt_utc):
+    """Low-precision geocentric RA (h) / Dec (deg). Good to ~1-2 deg: naked-eye grade."""
+    d = _julian_day(dt_utc) - 2451543.5
+    el = {
+        "Venus":   (76.6799 + 2.46590e-5 * d, 3.3946, 54.8910, 0.723330, 0.006773, 48.0052 + 1.60213 * d),
+        "Mars":    (49.5574 + 2.11081e-5 * d, 1.8497, 286.5016, 1.523688, 0.093405, 18.6021 + 0.5240207766 * d),
+        "Jupiter": (100.4542 + 2.76854e-5 * d, 1.3030, 273.8777, 5.20256, 0.048498, 19.8950 + 0.0830853001 * d),
+        "Saturn":  (113.6634 + 2.38980e-5 * d, 2.4886, 339.3939, 9.55475, 0.055546, 316.9670 + 0.0334442282 * d),
+    }[name]
+    sun = (0.0, 0.0, 282.9404 + 4.70935e-5 * d, 1.0, 0.016709, 356.0470 + 0.9856002585 * d)
+    px, py, pz, _, _ = _helio(*el)
+    # NOTE: Schlyter's Sun row yields the Sun GEOCENTRIC directly, so Earth's
+    # heliocentric vector is its negation: geo = helio_planet + sun_geo.
+    ex, ey, ez, _, _ = _helio(*sun)
+    return _ecl_to_ra_dec(px + ex, py + ey, pz + ez)
+
+
+def moon_ra_dec(dt_utc):
+    """Simplified lunar position, ~0.5-1 deg: fine for 'look that way'."""
+    d = _julian_day(dt_utc) - 2451543.5
+    ms = math.radians((356.0470 + 0.9856002585 * d) % 360.0)  # Sun mean anomaly
+    mm = (115.3654 + 13.0649929509 * d) % 360.0  # Moon mean anomaly (deg)
+    d_elong = (297.85036 + 12.19074912 * d) % 360.0  # mean elongation
+    f = (93.2720950 + 13.22935021 * d) % 360.0
+    lon = (218.3164477 + 13.17639648 * d
+           + 6.288774 * math.sin(math.radians(mm))
+           + 1.274027 * math.sin(math.radians(2 * d_elong - mm))
+           + 0.658314 * math.sin(math.radians(2 * d_elong))
+           + 0.213618 * math.sin(math.radians(2 * mm))
+           - 0.185116 * math.sin(ms)
+           - 0.114332 * math.sin(math.radians(2 * f)))
+    lat = (5.128122 * math.sin(math.radians(f))
+           + 0.280602 * math.sin(math.radians(mm + f))
+           + 0.277693 * math.sin(math.radians(mm - f))
+           + 0.173237 * math.sin(math.radians(2 * d_elong - f)))
+    lon_r, lat_r = math.radians(lon % 360.0), math.radians(lat)
+    x = math.cos(lon_r) * math.cos(lat_r)
+    y = math.sin(lon_r) * math.cos(lat_r)
+    z = math.sin(lat_r)
+    return _ecl_to_ra_dec(x, y, z)
+
 
 def sunapprox_alt_az(ra_h, dec_d, lat_d, lon_e_d, dt_utc):
     """Altitude/azimuth (deg) of an RA/Dec point for lat/lon at a UTC datetime."""
@@ -82,16 +173,53 @@ def sunapprox_alt_az(ra_h, dec_d, lat_d, lon_e_d, dt_utc):
     return math.degrees(alt), az
 
 
+PLANETS = [
+    {"name": "Venus", "mag": -4.4,
+     "hint": "Blazing white — the brightest 'star' around, always near the Sun: low west after sunset or low east before dawn."},
+    {"name": "Jupiter", "mag": -2.2,
+     "hint": "Creamy-white and steady (planets don't twinkle). Binoculars reveal its four moons."},
+    {"name": "Saturn", "mag": 0.6,
+     "hint": "Pale gold point of light; its rings need a small telescope."},
+    {"name": "Mars", "mag": 1.2,
+     "hint": "Faint orange-red ember. Currently far and small — manage expectations."},
+]
+
+
 def tonights_sky(lat=12.97, lon=77.59, dt_utc=None, min_alt=15.0):
     dt_utc = dt_utc or datetime.now(timezone.utc)
+    illum, phase = moon_phase(dt_utc)
+    # Moonlight drowns faint targets: naked-eye limit slides from ~5.5 (new moon) to ~2.3 (full).
+    mag_limit = 5.5 - illum * 3.2
     out = []
     for c in CONSTELLATIONS:
         alt, az = sunapprox_alt_az(c["ra"], c["dec"], lat, lon, dt_utc)
         if alt >= min_alt:
-            out.append({**c, "alt": round(alt, 1),
+            mag = STAR_MAG.get(c["star"], 3.0)
+            out.append({**c, "kind": "star", "mag": mag,
+                        "washed": mag > mag_limit,
+                        "alt": round(alt, 1),
                         "dir": COMPASS[int(((az + 22.5) % 360) // 45)]})
+    for p in PLANETS:
+        try:
+            ra, dec = planet_ra_dec(p["name"], dt_utc)
+        except KeyError:
+            continue
+        alt, az = sunapprox_alt_az(ra, dec, lat, lon, dt_utc)
+        if alt >= min_alt:
+            out.append({"name": p["name"], "star": p["name"], "kind": "planet",
+                        "mag": p["mag"], "washed": False, "hint": p["hint"],
+                        "alt": round(alt, 1),
+                        "dir": COMPASS[int(((az + 22.5) % 360) // 45)]})
+    try:
+        mra, mdec = moon_ra_dec(dt_utc)
+        malt, maz = sunapprox_alt_az(mra, mdec, lat, lon, dt_utc)
+        moon = {"illum": illum, "phase": phase, "alt": round(malt, 1),
+                "dir": COMPASS[int(((maz + 22.5) % 360) // 45)],
+                "up": malt >= 0}
+    except Exception:  # noqa: BLE001
+        moon = {"illum": illum, "phase": phase, "alt": None, "dir": "?", "up": False}
     out.sort(key=lambda c: -c["alt"])
-    return out, dt_utc
+    return out, dt_utc, moon
 
 
 TOUR_SYSTEM = (
@@ -136,13 +264,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _at_time(self):
+        """Optional ?at=ISO or {'at': ISO} override so users can plan ahead."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        iso = qs.get("at", [None])[0]
+        if not iso:
+            return None
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(200, (HERE / "index.html").read_bytes())
-        elif self.path == "/api/tonight":
-            sky, dt = tonights_sky()
+        elif self.path.startswith("/api/tonight"):
+            sky, dt, moon = tonights_sky(dt_utc=self._at_time())
             self._send(200, json.dumps({"for": dt.strftime("%Y-%m-%d %H:%M UTC"),
-                                        "visible": sky}).encode(), "application/json")
+                                        "moon": moon, "visible": sky}).encode(),
+                       "application/json")
         elif self.path == "/api/health":
             try:
                 with urllib.request.urlopen(f"{OLLAMA_HOST}/api/tags", timeout=5) as r:
@@ -165,27 +307,51 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"invalid JSON", "text/plain")
             return
         try:
+            at = None
+            if isinstance(body, dict) and body.get("at"):
+                try:
+                    at = datetime.fromisoformat(
+                        str(body["at"]).replace("Z", "+00:00"))
+                except ValueError:
+                    at = None
             if self.path == "/api/tour":
-                sky, dt = tonights_sky()
+                sky, dt, moon = tonights_sky(dt_utc=at)
                 lineup = "; ".join(
-                    f"{c['name']} (anchor {c['star']}, {c['alt']}° {c['dir']})" for c in sky)
+                    f"{c['name']} ({c.get('kind', 'star')} {c['star']}, "
+                    f"{c['alt']}° {c['dir']}"
+                    f"{', washed out by moonlight' if c.get('washed') else ''})"
+                    for c in sky)
                 text = ollama_chat(TOUR_SYSTEM,
-                    f"Tonight {dt.strftime('%b %d')} over Bengaluru, these are up: {lineup}. "
-                    f"Write the tour.")
+                    f"Night of {dt.strftime('%b %d')} over Bengaluru. Moon: {moon['phase']} "
+                    f"({int(moon['illum'] * 100)}% lit). Up now: {lineup}. "
+                    f"Write the tour; skip or de-prioritize washed-out targets.")
             elif self.path == "/api/detail":
                 name = str(body.get("name", ""))[:40]
                 c = next((x for x in CONSTELLATIONS if x["name"].lower() == name.lower()), None)
+                kind = "constellation"
                 if not c:
-                    self._send(404, b"unknown constellation", "text/plain")
+                    c = next((x for x in PLANETS if x["name"].lower() == name.lower()), None)
+                    kind = "planet"
+                if not c:
+                    if name.lower() == "moon":
+                        sky, dt, moon = tonights_sky(dt_utc=at)
+                        text = (f"The Moon is {moon['phase']} ({int(moon['illum'] * 100)}% lit)"
+                                + (f", {moon['alt']}° up in the {moon['dir']}." if moon["up"]
+                                   else " and currently below the horizon."))
+                        self._send(200, text.encode(), "text/plain; charset=utf-8")
+                        return
+                    self._send(404, b"unknown target", "text/plain")
                     return
-                sky, _ = tonights_sky()
+                sky, _, _ = tonights_sky(dt_utc=at)
                 live = next((x for x in sky if x["name"] == c["name"]), None)
+                label = (f"planet {c['name']}" if kind == "planet"
+                         else f"{c['name']} (brightest star {c['star']})")
                 if live:
-                    task = (f"{c['name']} (brightest star {c['star']}) is up right now: "
+                    task = (f"{label} is up right now: "
                             f"{live['alt']}° high in the {live['dir']}. "
                             f"Finder hint: {c['hint']}")
                 else:
-                    task = (f"{c['name']} (brightest star {c['star']}) is BELOW the horizon right now — "
+                    task = (f"{label} is BELOW the horizon right now — "
                             f"do not describe it as visible. Say plainly it is not up, then say when to "
                             f"catch it (which season / evening hours) and give this finder hint for then: {c['hint']}")
                 text = ollama_chat(DETAIL_SYSTEM, task)
